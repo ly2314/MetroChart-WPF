@@ -798,6 +798,154 @@
             }
         }
 
+        private void UpdateLegendCaption()
+        {
+            // data validation
+            this.Exceptions.Clear();
+
+            // ensure that caption of series is not null, otherwise all other series would be ignored (data from the same series are collection to the same datapointgroup) 
+            if (this.Series.Any(series => string.IsNullOrEmpty(series.SeriesTitle)))
+            {
+                Exceptions.Add("Series with empty caption cannot be used.");
+            }
+
+            //ensure that each series has a different name
+            if (this.Series.GroupBy(series => series.SeriesTitle).Any(group => group.Count() > 1))
+            {
+                Exceptions.Add("Series with duplicate name cannot be used.");
+            }
+
+            if (!HasExceptions)
+            {
+
+                List<DataPointGroup> result = new List<DataPointGroup>();
+                try
+                {
+                    if (GetIsRowColumnSwitched())
+                    {
+                        foreach (ChartSeries initialSeries in this.Series)
+                        {
+                            int itemIndex = 0;
+                            foreach (var seriesItem in initialSeries.Items)
+                            {
+                                string seriesItemCaption = GetPropertyValue(seriesItem, initialSeries.DisplayMember); //Security
+                                DataPointGroup dataPointGroup = result.Where(group => group.Caption == seriesItemCaption).FirstOrDefault();
+                                if (dataPointGroup == null)
+                                {
+                                    dataPointGroup = new DataPointGroup(this, seriesItemCaption, this.Series.Count > 1 ? true : false);
+                                    result.Add(dataPointGroup);
+                                    itemIndex++;
+                                }
+                            }
+                        }
+
+                        foreach (ChartSeries series in this.Series)
+                        {
+                            foreach (var seriesItem in series.Items)
+                            {
+                                string seriesItemCaption = GetPropertyValue(seriesItem, series.DisplayMember); //Security
+
+                                //finde die gruppe mit dem Namen
+                                DataPointGroup addToGroup = result.Where(group => group.Caption == seriesItemCaption).FirstOrDefault();
+
+                                //finde in der Gruppe 
+                                DataPoint groupdItem = addToGroup.DataPoints.Where(item => item.SeriesCaption == series.SeriesTitle).FirstOrDefault();
+                                groupdItem.ReferencedObject = seriesItem;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        foreach (ChartSeries initialSeries in this.Series)
+                        {
+                            //erstelle für jede Series einen DataPointGroup, darin wird dann für jedes Item in jeder Serie ein DataPoint angelegt
+                            DataPointGroup dataPointGroup = new DataPointGroup(this, initialSeries.SeriesTitle, this.Series.Count > 1 ? true : false);
+                            result.Add(dataPointGroup);
+
+                            CreateDataPointGroupBindings(dataPointGroup);
+
+                            //stelle nun sicher, dass alle DataPointGruppen die gleichen Datapoints hat
+                            foreach (ChartSeries allSeries in this.Series)
+                            {
+                                int seriesIndex = 0;
+                                foreach (var seriesItem in allSeries.Items)
+                                {
+                                    string seriesItemCaption = GetPropertyValue(seriesItem, initialSeries.DisplayMember); //Security
+                                    DataPoint existingDataPoint = dataPointGroup.DataPoints.Where(datapoint => datapoint.SeriesCaption == seriesItemCaption).FirstOrDefault();
+                                    if (existingDataPoint == null)
+                                    {
+                                        DataPoint datapoint = new DataPoint(this);
+                                        datapoint.SeriesCaption = seriesItemCaption;
+                                        datapoint.ValueMember = allSeries.ValueMember;
+                                        datapoint.DisplayMember = allSeries.DisplayMember;
+                                        datapoint.ItemBrush = GetItemBrush(seriesIndex);
+
+                                        CreateDataPointBindings(datapoint, dataPointGroup);
+
+                                        dataPointGroup.DataPoints.Add(datapoint);
+                                    }
+                                    seriesIndex++;
+                                }
+                            }
+                        }
+
+                        ///gehe alle Series durch (Security, Naming etc.)
+                        foreach (ChartSeries series in this.Series)
+                        {
+                            foreach (var seriesItem in series.Items)
+                            {
+                                //finde die gruppe mit dem Namen
+                                DataPointGroup addToGroup = result.Where(group => group.Caption == series.SeriesTitle).FirstOrDefault();
+
+                                //finde in der Gruppe das richtige Element
+                                string seriesItemCaption = GetPropertyValue(seriesItem, series.DisplayMember); //Security
+
+                                DataPoint groupdItem = addToGroup.DataPoints.Where(item => item.SeriesCaption == seriesItemCaption).FirstOrDefault();
+                                groupdItem.ReferencedObject = seriesItem;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                //finished, copy all to the array
+                groupedSeries.Clear();
+                foreach (var item in result)
+                {
+                    groupedSeries.Add(item);
+                }
+
+                UpdateColorsOfDataPoints();
+
+                chartLegendItems.Clear();
+                DataPointGroup firstgroup = groupedSeries.FirstOrDefault();
+                if (firstgroup != null)
+                {
+                    foreach (DataPoint dataPoint in firstgroup.DataPoints)
+                    {
+                        ChartLegendItemViewModel legendItem = new ChartLegendItemViewModel();
+
+                        var captionBinding = new Binding();
+                        captionBinding.Source = dataPoint;
+                        captionBinding.Mode = BindingMode.OneWay;
+                        captionBinding.Path = new PropertyPath("SeriesCaption");
+                        BindingOperations.SetBinding(legendItem, ChartLegendItemViewModel.CaptionProperty, captionBinding);
+
+                        var brushBinding = new Binding();
+                        brushBinding.Source = dataPoint;
+                        brushBinding.Mode = BindingMode.OneWay;
+                        brushBinding.Path = new PropertyPath("ItemBrush");
+                        BindingOperations.SetBinding(legendItem, ChartLegendItemViewModel.ItemBrushProperty, brushBinding);
+
+                        chartLegendItems.Add(legendItem);
+                    }
+                }
+                RecalcSumOfDataPointGroup();
+            }
+        }
+
         private bool GetIsRowColumnSwitched()
         {
             if (IsRowColumnSwitched)
@@ -894,6 +1042,7 @@
             if (e.PropertyName == "SumOfDataPointGroup")
             {
                 RecalcSumOfDataPointGroup();
+                UpdateLegendCaption();
             }
         }
 
